@@ -1,0 +1,99 @@
+# Names an EC2 instance upon launch.
+#
+# Copyright (c) 2016 Sailthru, Inc., https://www.sailthru.com/
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import json
+import os
+import boto3
+
+def hostname(event, context):
+
+    # Ensure we have our configuration.
+    cfg_r53_zone_id = os.environ['R53_ZONE_ID']
+    cfg_tag_env     = os.environ['ENV_TAG']
+    cfg_tag_role    = os.environ['ROLE_TAG']
+
+    # Filter out any unwanted events that come through, eg by mistake.
+    try:
+        if event['source'] != 'aws.ec2':
+            print 'Ignorning non-EC2 event'
+            return 'Failure'
+
+        if not event['detail']['instance-id']:
+            print 'Ignoring event without instance-id'
+            return 'Failure'
+
+        if event['detail']['state'] != 'running':
+            print 'Ignoring state change as not state == running'
+            return 'Failure'
+
+    except Exception as e:
+        print e
+        print 'An unexpected issue occured when parsing the event - possibly corrupt/unexpected event data.'
+        return 'Failure'
+
+
+    # We have an instance ID. Let's look up the instance and fetch it's full
+    # set of information. We get told which region inside the CloudWatch event.
+    try:
+        print 'Fetching instance data for instance: ' + event['detail']['instance-id']
+
+        client_ec2 = boto3.client('ec2', region_name=event['region'])
+        instance_details = client_ec2.describe_instances(
+            DryRun=False,
+            InstanceIds=[
+                event['detail']['instance-id']
+            ]
+        )['Reservations'][0]['Instances'][0] # Will only ever be one instance returned.
+
+        # Flatten the tag array into a hash/dict
+        instance_tags = {}
+        for tag in instance_details['Tags']:
+            instance_tags[tag['Key']] = tag['Value']
+
+        # We will recieve a cloudwatch event everytime the instance changes to
+        # state "running". This will include new instances being launched for
+        # the first time, but it will also include instances that have been
+        # stopped-started. Therefore, we should check if there is an instance
+        # Name tag or not already.
+
+        if 'Name' in instance_tags:
+            print 'Instance already tagged, no naming action required.'
+            return 'Success'
+
+        # Make sure the tags we need for naming purposes are on the instance. In
+        # order for this Lambda to work, these tags need to be added to the
+        # instance at launch time by the autoscaling group - user data would be
+        # far too late.
+        if cfg_tag_env not in instance_tags:
+            print 'Required tag ('+ cfg_tag_env +') not found on instance. Unable to name.'
+            return 'Failure'
+
+        if cfg_tag_role not in instance_tags:
+            print 'Required tag ('+ cfg_tag_role +') not found on instance. Unable to name.'
+            return 'Failure'
+
+        # Instance is current unnamed, is in running state and has the source
+        # tags we need. Let's generate the hostname!
+        
+
+    except Exception as e:
+        print e
+        print 'An unexpected issue occured when querying EC2 for instance details.'
+        return 'Failure'
+
+
+
+    return 'Success'

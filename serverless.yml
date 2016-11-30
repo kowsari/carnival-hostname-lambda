@@ -1,0 +1,52 @@
+# Serverless configuration for the Carnival hostname Lamba.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+
+service: hostname-lambda
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+custom:
+  # The DNS zone to generate records inside of.
+  r53zoneid: ${env:R53_ZONE_ID}
+
+provider:
+  name: aws
+  runtime: python2.7
+
+  stage: staging
+  region: us-east-1
+
+
+  iamRoleStatements:
+    # We need to be able to adjust the Route53 zone records.
+    - Effect: "Allow"
+      Action:
+        - "route53:ChangeResourceRecordSets"
+      Resource: { "Fn::Join" : ["", ["arn:aws:route53:::hostedzone/", ":${self:custom.r53zoneid}" ] ]  }
+
+    # We need to be able to descibe any of the EC2 instances we recieve events
+    # for, so that we can obtain tags, etc.
+    - Effect: "Allow"
+      Action:
+        - "ec2:DescribeInstances"
+      Resource: "*"
+
+
+  # Pass the Route53 zone information through to the Lambda as environmentals.
+  environment:
+    R53_ZONE_ID: ${self:custom.r53zoneid}
+    ENV_TAG: Environment
+    ROLE_TAG: Role
+
+# Our function configuration is pretty unexciting, since we have to setup the
+# event hook manually
+functions:
+  hostname:
+    handler: handler.hostname
+    description: Creates R53 DNS record and EC2 tags when instance is created.
+    memorySize: 128 # MB
+    timeout: 30
