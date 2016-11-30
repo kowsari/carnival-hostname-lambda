@@ -25,8 +25,9 @@ provider:
     # We need to be able to adjust the Route53 zone records.
     - Effect: "Allow"
       Action:
+        - "route53:GetHostedZone"
         - "route53:ChangeResourceRecordSets"
-      Resource: { "Fn::Join" : ["", ["arn:aws:route53:::hostedzone/", ":${self:custom.r53zoneid}" ] ]  }
+      Resource: { "Fn::Join" : ["", ["arn:aws:route53:::hostedzone/", "${self:custom.r53zoneid}" ] ]  }
 
     # We need to be able to descibe any of the EC2 instances we recieve events
     # for and also be able to write tags on instances.

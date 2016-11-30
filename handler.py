@@ -24,9 +24,9 @@ import boto3
 def hostname(event, context):
 
     # Ensure we have our configuration.
-    cfg_r53_zone_id = os.environ['R53_ZONE_ID']
-    cfg_tag_env     = os.environ['ENV_TAG']
-    cfg_tag_role    = os.environ['ROLE_TAG']
+    cfg_r53_zone_id   = os.environ['R53_ZONE_ID']
+    cfg_tag_env       = os.environ['ENV_TAG']
+    cfg_tag_role      = os.environ['ROLE_TAG']
 
     # Filter out any unwanted events that come through, eg by mistake.
     try:
@@ -146,10 +146,44 @@ def hostname(event, context):
         )
 
 
+        # Finally we need to create entries in the Route53 zone for this new
+        # EC2 instance. We take the ID we have and get the zone name as well.
+
+        client_r53 = boto3.client('route53')
+
+        try:
+            cfg_r53_zone_name = client_r53.get_hosted_zone(Id=cfg_r53_zone_id)['HostedZone']['Name']
+        except KeyError as e:
+            # Catch misconfiguration by admin
+            print "Hosted zone ID "+ cfg_r53_zone_id +" does not appear to exist."
+            return 'Failure'
+
+        print "Resolved zone ID "+ cfg_r53_zone_id +" as domain "+ cfg_r53_zone_name
+
+        client_r53.change_resource_record_sets(
+            HostedZoneId=cfg_r53_zone_id,
+            ChangeBatch={
+                'Changes': [
+                    {
+                        'Action': 'UPSERT',
+                        'ResourceRecordSet': {
+                            'Name': hostname + '.' + cfg_r53_zone_name,
+                            'Type': 'A',
+                            'TTL': 86400,
+                            'ResourceRecords': [
+                                {
+                                    'Value': instance_details['PrivateIpAddress']
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        )
 
 
     except Exception as e:
-        print 'An unexpected issue occured when querying EC2 for instance details.'
+        print 'An unexpected issue occured when interacting with the AWS APIs.'
         raise
 
 
