@@ -125,10 +125,26 @@ def hostname(event, context):
         print "Generated hostname " + hostname + " of length "+ str(len(hostname)) +" chars"
 
 
+        # We now need to tag our instance with the name that we have generated.
+        print "Tagging instance..."
+
+        client_ec2.create_tags(
+            DryRun=False,
+            Resources=[
+                event['detail']['instance-id']
+            ],
+            Tags=[{
+              'Key': 'Name',
+              'Value': hostname
+            }]
+        )
+
+
+
+
     except Exception as e:
-        print e
         print 'An unexpected issue occured when querying EC2 for instance details.'
-        return 'Failure'
+        raise
 
 
 

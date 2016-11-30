@@ -29,10 +29,11 @@ provider:
       Resource: { "Fn::Join" : ["", ["arn:aws:route53:::hostedzone/", ":${self:custom.r53zoneid}" ] ]  }
 
     # We need to be able to descibe any of the EC2 instances we recieve events
-    # for, so that we can obtain tags, etc.
+    # for and also be able to write tags on instances.
     - Effect: "Allow"
       Action:
         - "ec2:DescribeInstances"
+        - "ec2:CreateTags"
       Resource: "*"
 
 
