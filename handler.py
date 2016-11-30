@@ -59,13 +59,19 @@ def hostname(event, context):
 
         print 'Fetching instance data for instance: ' + event['detail']['instance-id']
 
-        client_ec2 = boto3.client('ec2', region_name=event['region'])
-        instance_details = client_ec2.describe_instances(
-            DryRun=False,
-            InstanceIds=[
-                event['detail']['instance-id']
-            ]
-        )['Reservations'][0]['Instances'][0] # Will only ever be one instance returned.
+        try:
+            client_ec2 = boto3.client('ec2', region_name=event['region'])
+            instance_details = client_ec2.describe_instances(
+                DryRun=False,
+                InstanceIds=[
+                    event['detail']['instance-id']
+                ]
+            )['Reservations'][0]['Instances'][0] # Will only ever be one instance returned.
+        except IndexError as e:
+            # Should not normally be possible, but we catch it to make testing
+            # more obvious when people are using stale data.
+            print "Instance ID "+ event['detail']['instance-id'] +" does not exist."
+            return 'Failure'
 
         # Flatten the tag array into a hash/dict
         instance_tags = {}
