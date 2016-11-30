@@ -17,6 +17,7 @@
 
 import os
 import re
+import time
 import json
 import boto3
 
@@ -42,14 +43,20 @@ def hostname(event, context):
             return 'Failure'
 
     except Exception as e:
-        print e
         print 'An unexpected issue occured when parsing the event - possibly corrupt/unexpected event data.'
-        return 'Failure'
+        raise
 
 
     # We have an instance ID. Let's look up the instance and fetch it's full
     # set of information. We get told which region inside the CloudWatch event.
     try:
+        # This is horrible, but the problem we have is that the instance gets
+        # put into state 'running' before it's had a change to get tagged. So
+        # we sleep for a few seconds. Feels horrible given how fast Lambas can
+        # be, but is still a tiny fraction of a cost.
+        print "Sleeping for 15 seconds for tagging to take place..."
+        time.sleep(15)
+
         print 'Fetching instance data for instance: ' + event['detail']['instance-id']
 
         client_ec2 = boto3.client('ec2', region_name=event['region'])

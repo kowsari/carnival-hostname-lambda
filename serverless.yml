@@ -49,4 +49,4 @@ functions:
     handler: handler.hostname
     description: Creates R53 DNS record and EC2 tags when instance is created.
     memorySize: 128 # MB
-    timeout: 30
+    timeout: 60
