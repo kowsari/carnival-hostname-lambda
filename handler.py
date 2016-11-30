@@ -1,4 +1,5 @@
-# Names an EC2 instance upon launch.
+# Configures EC2 instance hostnames upon launch. Refer to the README.md for
+# more information.
 #
 # Copyright (c) 2016 Sailthru, Inc., https://www.sailthru.com/
 #
@@ -14,8 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import os
+import re
+import json
 import boto3
 
 def hostname(event, context):
@@ -87,7 +89,34 @@ def hostname(event, context):
 
         # Instance is current unnamed, is in running state and has the source
         # tags we need. Let's generate the hostname!
-        
+        #
+        # Our naming scheme is regionaz-env-type-unique, but we use some tricks
+        # to shorten various details.
+
+        hostname_parts = {}
+
+        # Drop prefix on instance ID
+        hostname_parts['instanceid'] = re.sub(r'^i-', '', event['detail']['instance-id'])
+
+        # Grab single char AZ.
+        hostname_parts['az'] = instance_details['Placement']['AvailabilityZone'][-1:]
+
+        # Get the region name and create a short version.
+        region_split = instance_details['Placement']['AvailabilityZone'][:-1].split('-')
+        hostname_parts['region'] = region_split[0] + region_split[1][:1] + region_split[2]
+
+        # We grab first 4 char only, keep names short.
+        hostname_parts['environment'] = instance_tags[cfg_tag_env][:4]
+
+        # Role with bad chars replaced
+        hostname_parts['role'] = re.sub(r'[_:\s]', '-', instance_tags[cfg_tag_role])
+
+        print hostname_parts
+
+        # Assemble final name
+        hostname = hostname_parts['region'] +''+ hostname_parts['az'] +'-'+ hostname_parts['environment'] +'-'+ hostname_parts['role'] +'-'+ hostname_parts['instanceid']
+        print "Generated hostname " + hostname + " of length "+ str(len(hostname)) +" chars"
+
 
     except Exception as e:
         print e
