@@ -109,7 +109,7 @@ def hostname(event, context):
                     # eg "Environment" might exist, but not "Role" for a short
                     # period.
 
-                    sleeptime = 2
+                    sleeptime = 4
                     print "Required tags not allocated to instance yet, sleeping (" + str(sleeptime) +" seconds)..."
                     time.sleep(sleeptime)
                     continue
