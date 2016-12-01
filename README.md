@@ -54,7 +54,17 @@ After deploying the Lambda, it can be invoked with the test data with:
      serverless invoke --stage $ENVIRONMENT --function hostname --path event.json
 
 
+# User Data integration
 
+To obtain the hostnames from EC2 instance user-data, the following commands can
+be used to obtain the instance ID and then resolve the CNAME target for the
+instance ID to get the allocated FQDN.
+
+AWS_INSTANCE_ID=`curl -s http://169.254.169.254/latest/meta-data/instance-id`
+HOSTNAME=`host ${AWS_INSTANCE_ID}.example.com |sed -n "s/^.*\s\(\S*\)\.\$/\1/p"`
+
+Alternatively, if your instances are permitted to describe their own tags, the
+non-FQDN hostname is set on the `Name` tag.
 
 
 # Contributions

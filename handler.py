@@ -190,6 +190,7 @@ def hostname(event, context):
             HostedZoneId=cfg_r53_zone_id,
             ChangeBatch={
                 'Changes': [
+                    # Create a record for the label hostname we have created.
                     {
                         'Action': 'UPSERT',
                         'ResourceRecordSet': {
@@ -202,7 +203,22 @@ def hostname(event, context):
                                 }
                             ]
                         }
-                    }
+                    },
+                    # We create a record for the instance ID that servers can
+                    # use to easily discover their hostname.
+                    {
+                        'Action': 'UPSERT',
+                        'ResourceRecordSet': {
+                            'Name': 'i-' + hostname_parts['instanceid'] + '.' + cfg_r53_zone_name,
+                            'Type': 'CNAME',
+                            'TTL': 86400,
+                            'ResourceRecords': [
+                                {
+                                    'Value': hostname + '.' + cfg_r53_zone_name
+                                }
+                            ]
+                        }
+                    },
                 ]
             }
         )
