@@ -13,7 +13,8 @@ to EC2 instances.
 Requirements are that your EC2 instances are configured to have an environment
 tagged in the `Environment` tag and a role/label in the `Role` tag.
 
-TODO: Also need to add a cleanup feature...
+The Lambda can also support cleaning up terminated instances and will remove
+the DNS records that had been created for the instance.
 
 # Deployment
 
