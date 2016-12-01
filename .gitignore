@@ -1,3 +1,5 @@
 # Ignore serverless cache/generation directories
 .serverless
 
+# MacOS *glare*
+.DS_Store
