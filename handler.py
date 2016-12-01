@@ -44,61 +44,87 @@ def hostname(event, context):
 
     except Exception as e:
         print 'An unexpected issue occured when parsing the event - possibly corrupt/unexpected event data.'
-        raise
+        raise e
 
 
     # We have an instance ID. Let's look up the instance and fetch it's full
     # set of information. We get told which region inside the CloudWatch event.
-    try:
-        # This is horrible, but the problem we have is that the instance gets
-        # put into state 'running' before it's had a change to get tagged. So
-        # we sleep for a few seconds. Feels horrible given how fast Lambas can
-        # be, but is still a tiny fraction of a cost.
-        print "Sleeping for 15 seconds for tagging to take place..."
-        time.sleep(15)
+    client_ec2 = boto3.client('ec2', region_name=event['region'])
+    instance_tags = {}
 
+    try:
         print 'Fetching instance data for instance: ' + event['detail']['instance-id']
 
-        try:
-            client_ec2 = boto3.client('ec2', region_name=event['region'])
-            instance_details = client_ec2.describe_instances(
-                DryRun=False,
-                InstanceIds=[
-                    event['detail']['instance-id']
-                ]
-            )['Reservations'][0]['Instances'][0] # Will only ever be one instance returned.
-        except IndexError as e:
-            # Should not normally be possible, but we catch it to make testing
-            # more obvious when people are using stale data.
-            print "Instance ID "+ event['detail']['instance-id'] +" does not exist."
-            return 'Failure'
 
-        # Flatten the tag array into a hash/dict
-        instance_tags = {}
-        for tag in instance_details['Tags']:
-            instance_tags[tag['Key']] = tag['Value']
+        for i in range(10):
+            try:
+                # Fetch EC2 instance details
+                instance_details = client_ec2.describe_instances(
+                    DryRun=False,
+                    InstanceIds=[
+                        event['detail']['instance-id']
+                    ]
+                )['Reservations'][0]['Instances'][0] # Will only ever be one instance returned.
 
-        # We will recieve a cloudwatch event everytime the instance changes to
-        # state "running". This will include new instances being launched for
-        # the first time, but it will also include instances that have been
-        # stopped-started. Therefore, we should check if there is an instance
-        # Name tag or not already.
+                # Flatten the tag array into a hash/dict
+                for tag in instance_details['Tags']:
+                    instance_tags[tag['Key']] = tag['Value']
 
-        if 'Name' in instance_tags:
-            print 'Instance already tagged, no naming action required.'
-            return 'Success'
+                # We will recieve a cloudwatch event everytime the instance changes to
+                # state "running". This will include new instances being launched for
+                # the first time, but it will also include instances that have been
+                # stopped-started. Therefore, we should check if there is an instance
+                # Name tag or not already.
 
-        # Make sure the tags we need for naming purposes are on the instance. In
-        # order for this Lambda to work, these tags need to be added to the
-        # instance at launch time by the autoscaling group - user data would be
-        # far too late.
-        if cfg_tag_env not in instance_tags:
-            print 'Required tag ('+ cfg_tag_env +') not found on instance. Unable to name.'
-            return 'Failure'
+                if 'Name' in instance_tags:
+                    print 'Instance already tagged, no naming action required.'
+                    return 'Success'
 
-        if cfg_tag_role not in instance_tags:
-            print 'Required tag ('+ cfg_tag_role +') not found on instance. Unable to name.'
-            return 'Failure'
+                # Make sure the tags we need for naming purposes are on the instance. In
+                # order for this Lambda to work, these tags need to be added to the
+                # instance at launch time by the autoscaling group - user data would be
+                # far too late.
+                if cfg_tag_env not in instance_tags:
+                    print 'Required tag ('+ cfg_tag_env +') not found on instance (yet?)'
+                    raise KeyError('Tags')
+
+                if cfg_tag_role not in instance_tags:
+                    print 'Required tag ('+ cfg_tag_role +') not found on instance (yet?)'
+                    raise KeyError('Tags')
+
+                # Catch Max Loop
+                if i >= 10:
+                    # This should never be possible, unless AWS had some kind of
+                    # weird outage.
+                    print "Timed out waiting for instance tags to become available"
+                    return 'Failure'
+
+            except KeyError as e:
+                if e not in ['Tags', cfg_tag_env, cfg_tag_role]:
+                    # Sometimes when instances are transistioned from state
+                    # "pending" to "running", they have not yet had their
+                    # autoscale group tags allocated to them, so they are
+                    # tagless. If this happens, we should sleep and retry. To
+                    # make things worse, sometimes the tags are partially added,
+                    # eg "Environment" might exist, but not "Role" for a short
+                    # period.
+
+                    sleeptime = 2
+                    print "Required tags not allocated to instance yet, sleeping (" + str(sleeptime) +" seconds)..."
+                    time.sleep(sleeptime)
+                    continue
+
+            except IndexError as e:
+                # Should not normally be possible, but we catch it to make testing
+                # more obvious when people are using stale data.
+                print "Instance ID "+ event['detail']['instance-id'] +" does not exist."
+                return 'Failure'
+
+            else:
+                # All successful, let's move on.
+                break
+
+
 
         # Instance is current unnamed, is in running state and has the source
         # tags we need. Let's generate the hostname!
