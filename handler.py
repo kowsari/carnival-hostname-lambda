@@ -1,5 +1,5 @@
-# Configures EC2 instance hostnames upon launch. Refer to the README.md for
-# more information.
+# Manages EC2 instance hostnames, tags and DNS throughout their lifecycle.
+# Refer to the README.md for more information.
 #
 # Copyright (c) 2016 Sailthru, Inc., https://www.sailthru.com/
 #
@@ -38,8 +38,8 @@ def hostname(event, context):
             print 'Ignoring event without instance-id'
             return 'Failure'
 
-        if event['detail']['state'] != 'running':
-            print 'Ignoring state change as not state == running'
+        if event['detail']['state'] not in ['running', 'terminated']:
+            print 'Ignoring state change (only support running/terminated)'
             return 'Failure'
 
     except Exception as e:
@@ -76,9 +76,10 @@ def hostname(event, context):
                 # stopped-started. Therefore, we should check if there is an instance
                 # Name tag or not already.
 
-                if 'Name' in instance_tags:
-                    print 'Instance already tagged, no naming action required.'
-                    return 'Success'
+                if event['detail']['state'] == 'running':
+                    if 'Name' in instance_tags:
+                        print 'Instance already tagged, no naming action required.'
+                        return 'Success'
 
                 # Make sure the tags we need for naming purposes are on the instance. In
                 # order for this Lambda to work, these tags need to be added to the
@@ -125,51 +126,56 @@ def hostname(event, context):
                 break
 
 
+        if 'Name' in instance_tags:
+            # Instance already named. Probably a termination request, so let's
+            # take the current hostname incase the naming scheme has been
+            # changed since it's original launch date.
+            hostname = instance_tags['Name']
+            print "Instance is named: "+ hostname
 
-        # Instance is current unnamed, is in running state and has the source
-        # tags we need. Let's generate the hostname!
-        #
-        # Our naming scheme is regionaz-env-type-unique, but we use some tricks
-        # to shorten various details.
+        else:
+            # Instance is current unnamed, is in running state and has the source
+            # tags we need. Let's generate the hostname!
+            #
+            # Our naming scheme is regionaz-env-type-unique, but we use some tricks
+            # to shorten various details.
 
-        hostname_parts = {}
+            hostname_parts = {}
 
-        # Drop prefix on instance ID
-        hostname_parts['instanceid'] = re.sub(r'^i-', '', event['detail']['instance-id'])
+            # Drop prefix on instance ID
+            hostname_parts['instanceid'] = re.sub(r'^i-', '', event['detail']['instance-id'])
 
-        # Grab single char AZ.
-        hostname_parts['az'] = instance_details['Placement']['AvailabilityZone'][-1:]
+            # Grab single char AZ.
+            hostname_parts['az'] = instance_details['Placement']['AvailabilityZone'][-1:]
 
-        # Get the region name and create a short version.
-        region_split = instance_details['Placement']['AvailabilityZone'][:-1].split('-')
-        hostname_parts['region'] = region_split[0] + region_split[1][:1] + region_split[2]
+            # Get the region name and create a short version.
+            region_split = instance_details['Placement']['AvailabilityZone'][:-1].split('-')
+            hostname_parts['region'] = region_split[0] + region_split[1][:1] + region_split[2]
 
-        # We grab first 4 char only, keep names short.
-        hostname_parts['environment'] = instance_tags[cfg_tag_env][:4]
+            # We grab first 4 char only, keep names short.
+            hostname_parts['environment'] = instance_tags[cfg_tag_env][:4]
 
-        # Role with bad chars replaced
-        hostname_parts['role'] = re.sub(r'[_:\s]', '-', instance_tags[cfg_tag_role])
+            # Role with bad chars replaced
+            hostname_parts['role'] = re.sub(r'[_:\s]', '-', instance_tags[cfg_tag_role])
 
-        print hostname_parts
+            print hostname_parts
 
-        # Assemble final name
-        hostname = hostname_parts['region'] +''+ hostname_parts['az'] +'-'+ hostname_parts['environment'] +'-'+ hostname_parts['role'] +'-'+ hostname_parts['instanceid']
-        print "Generated hostname " + hostname + " of length "+ str(len(hostname)) +" chars"
+            # Assemble final name
+            hostname = hostname_parts['region'] +''+ hostname_parts['az'] +'-'+ hostname_parts['environment'] +'-'+ hostname_parts['role'] +'-'+ hostname_parts['instanceid']
+            print "Generated hostname " + hostname + " of length "+ str(len(hostname)) +" chars"
 
-
-        # We now need to tag our instance with the name that we have generated.
-        print "Tagging instance..."
-
-        client_ec2.create_tags(
-            DryRun=False,
-            Resources=[
-                event['detail']['instance-id']
-            ],
-            Tags=[{
-              'Key': 'Name',
-              'Value': hostname
-            }]
-        )
+            # We now need to tag our instance with the name that we have generated.
+            print "Tagging instance..."
+            client_ec2.create_tags(
+                DryRun=False,
+                Resources=[
+                    event['detail']['instance-id']
+                ],
+                Tags=[{
+                  'Key': 'Name',
+                  'Value': hostname
+                }]
+            )
 
 
         # Finally we need to create entries in the Route53 zone for this new
@@ -186,20 +192,54 @@ def hostname(event, context):
 
         print "Resolved zone ID "+ cfg_r53_zone_id +" as domain "+ cfg_r53_zone_name
 
+        # Delete or create depending on current instance state. We also need to
+        # lookup the private IP if performing a delete, since a terminated
+        # instance loses it's historic private IP address information.
+
+        r53_action = ''
+        r53_private_ip = ''
+
+        if event['detail']['state'] == 'running':
+            r53_action = 'UPSERT'
+            r53_private_ip = instance_details['PrivateIpAddress']
+
+        if event['detail']['state'] == 'terminated':
+            r53_action = 'DELETE'
+
+            # We have to lookup the previously assigned private IP via R53... It
+            # would be easier to just make a DNS query, but we can't assume the
+            # domain is publically resolvable (eg private R53 zones).
+            try:
+                print "Attempting to lookup previous private IP of terminated instance..."
+
+                r53_private_ip = client_r53.list_resource_record_sets(
+                    HostedZoneId=cfg_r53_zone_id,
+                    StartRecordName=hostname + '.' + cfg_r53_zone_name,
+                    StartRecordType='A'
+                )['ResourceRecordSets'][0]['ResourceRecords'][0]['Value']
+                print "Private IP is: " + r53_private_ip
+
+            except Exception as e:
+                print "Unable to obtain private IP of terminated instance"
+                return 'Failure'
+
+        print "Updating DNS... ("+ r53_action +")"
+
+
         client_r53.change_resource_record_sets(
             HostedZoneId=cfg_r53_zone_id,
             ChangeBatch={
                 'Changes': [
                     # Create a record for the label hostname we have created.
                     {
-                        'Action': 'UPSERT',
+                        'Action': r53_action,
                         'ResourceRecordSet': {
                             'Name': hostname + '.' + cfg_r53_zone_name,
                             'Type': 'A',
                             'TTL': 86400,
                             'ResourceRecords': [
                                 {
-                                    'Value': instance_details['PrivateIpAddress']
+                                    'Value': r53_private_ip
                                 }
                             ]
                         }
@@ -207,9 +247,9 @@ def hostname(event, context):
                     # We create a record for the instance ID that servers can
                     # use to easily discover their hostname.
                     {
-                        'Action': 'UPSERT',
+                        'Action': r53_action,
                         'ResourceRecordSet': {
-                            'Name': 'i-' + hostname_parts['instanceid'] + '.' + cfg_r53_zone_name,
+                            'Name': event['detail']['instance-id'] + '.' + cfg_r53_zone_name,
                             'Type': 'CNAME',
                             'TTL': 86400,
                             'ResourceRecords': [

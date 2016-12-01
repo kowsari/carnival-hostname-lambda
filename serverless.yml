@@ -26,6 +26,7 @@ provider:
     - Effect: "Allow"
       Action:
         - "route53:GetHostedZone"
+        - "route53:ListResourceRecordSets"
         - "route53:ChangeResourceRecordSets"
       Resource: { "Fn::Join" : ["", ["arn:aws:route53:::hostedzone/", "${self:custom.r53zoneid}" ] ]  }
 
