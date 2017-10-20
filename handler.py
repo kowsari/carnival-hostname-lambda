@@ -74,12 +74,16 @@ def hostname(event, context):
                 # state "running". This will include new instances being launched for
                 # the first time, but it will also include instances that have been
                 # stopped-started. Therefore, we should check if there is an instance
-                # Name tag or not already.
+                # Name tag or not already and that is has something in it.
 
                 if event['detail']['state'] == 'running':
                     if 'Name' in instance_tags:
-                        print 'Instance already tagged, no naming action required.'
-                        return 'Success'
+                        if instance_tags['Name'] == '':
+                            # Remove it to simplify further checks
+                            del instance_tags['Name']
+                        else:
+                            print 'Instance already tagged, no naming action required.'
+                            return 'Success'
 
                 # Make sure the tags we need for naming purposes are on the instance. In
                 # order for this Lambda to work, these tags need to be added to the
