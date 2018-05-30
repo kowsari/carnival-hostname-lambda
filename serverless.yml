@@ -44,6 +44,8 @@ provider:
     R53_ZONE_ID: ${self:custom.r53zoneid}
     ENV_TAG: Environment
     ROLE_TAG: Role
+    TTL: 60
+    RR_TYPE: cname
 
 # Our function configuration is pretty unexciting, since we have to setup the
 # event hook manually

@@ -27,6 +27,8 @@ def hostname(event, context):
     cfg_r53_zone_id   = os.environ['R53_ZONE_ID']
     cfg_tag_env       = os.environ['ENV_TAG']
     cfg_tag_role      = os.environ['ROLE_TAG']
+    cfg_ttl           = int(os.environ['TTL'])
+    cfg_rr_type       = os.environ['RR_TYPE']
 
     # Filter out any unwanted events that come through, eg by mistake.
     try:
@@ -79,11 +81,8 @@ def hostname(event, context):
                 if event['detail']['state'] == 'running':
                     if 'Name' in instance_tags:
                         if instance_tags['Name'] == '':
-                            # Remove it to simplify further checks
-                            del instance_tags['Name']
-                        else:
-                            print 'Instance already tagged, no naming action required.'
-                            return 'Success'
+                            print 'Instance has no name tag'
+                            raise KeyError('Tags')
 
                 # Make sure the tags we need for naming purposes are on the instance. In
                 # order for this Lambda to work, these tags need to be added to the
@@ -229,41 +228,37 @@ def hostname(event, context):
 
         print "Updating DNS... ("+ r53_action +")"
 
+        changes = []
+        if cfg_rr_type == 'cname':
+            # Create a record for the label hostname we have created.
+            changes.append({
+                    'Action': r53_action,
+                    'ResourceRecordSet': {
+                            'Name': hostname + '.' + cfg_r53_zone_name,
+                            'Type': 'A',
+                            'TTL': cfg_ttl,
+                            'ResourceRecords': [{
+                                    'Value': r53_private_ip
+                            }]
+                    }})
+        if cfg_rr_type == 'a':
+            # We create a record for the instance ID that servers can
+            # use to easily discover their hostname.
+            change.append({
+                    'Action': r53_action,
+                    'ResourceRecordSet': {
+                            'Name': hostname + '.' + cfg_r53_zone_name,
+                            'Type': 'CNAME',
+                            'TTL': cfg_ttl,
+                            'ResourceRecords': [{
+                                    'Value': hostname + '.' + cfg_r53_zone_name
+                            }]
+                    }})
 
         client_r53.change_resource_record_sets(
             HostedZoneId=cfg_r53_zone_id,
             ChangeBatch={
-                'Changes': [
-                    # Create a record for the label hostname we have created.
-                    {
-                        'Action': r53_action,
-                        'ResourceRecordSet': {
-                            'Name': hostname + '.' + cfg_r53_zone_name,
-                            'Type': 'A',
-                            'TTL': 86400,
-                            'ResourceRecords': [
-                                {
-                                    'Value': r53_private_ip
-                                }
-                            ]
-                        }
-                    },
-                    # We create a record for the instance ID that servers can
-                    # use to easily discover their hostname.
-                    {
-                        'Action': r53_action,
-                        'ResourceRecordSet': {
-                            'Name': event['detail']['instance-id'] + '.' + cfg_r53_zone_name,
-                            'Type': 'CNAME',
-                            'TTL': 86400,
-                            'ResourceRecords': [
-                                {
-                                    'Value': hostname + '.' + cfg_r53_zone_name
-                                }
-                            ]
-                        }
-                    },
-                ]
+                'Changes': changes
             }
         )
 
